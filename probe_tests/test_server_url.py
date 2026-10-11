@@ -209,10 +209,13 @@ class HTTPTests(unittest.TestCase):
     def test_oversize_and_non_json_rejected_after_auth(self):
         from probe.outbound import MAX_RPC_BYTES
         token = self.exchange(self.approved_code())['access_token']
-        headers = {'Authorization': 'Bearer ' + token, 'Content-Length': str(MAX_RPC_BYTES + 1)}
-        self.assertEqual(self.send('POST', '/mcp', {}, headers)[0], 413)
-        headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'text/plain'}
-        self.assertEqual(self.send('POST', '/mcp', {}, headers)[0], 415)
+        # Verify rejection before sending a body. A short fake body after an
+        # oversized length can race the error response with a Windows TCP reset.
+        headers = {'Authorization': 'Bearer ' + token, 'Content-Length': str(MAX_RPC_BYTES + 1),
+                   'Content-Type': 'application/json'}
+        self.assertEqual(self.send('POST', '/mcp', None, headers)[0], 413)
+        headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'text/plain', 'Content-Length': '2'}
+        self.assertEqual(self.send('POST', '/mcp', None, headers)[0], 415)
 
     def test_invalid_notification_does_not_desynchronize_worker(self):
         token = self.exchange(self.approved_code())['access_token']

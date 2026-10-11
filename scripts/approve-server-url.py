@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Owner-run local approval. No secret is printed or supplied on the command line."""
+"""Owner-run or explicitly delegated single-request local approval.
+
+No secret is printed or supplied on the command line. Public requests cannot
+select noninteractive approval; --yes is available only to a local operator.
+"""
 import argparse
 import os
 from pathlib import Path
@@ -9,21 +13,24 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from probe.server_url import private_json, CHATGPT_REDIRECT
+from probe.server_url import private_json, CHATGPT_REDIRECT, SCOPE
 from probe.platform_io import configure_stdio, private_dir
 
 
-def main():
+def main(argv=None):
     configure_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument('--request', required=True)
-    args = parser.parse_args()
+    parser.add_argument('--yes', action='store_true', help='Explicit local authorization for this exact request; requires owner or delegated authority')
+    args = parser.parse_args(argv)
     if not re.fullmatch(r'[0-9a-f]{32}', args.request):
         parser.error('Invalid request ID')
     directory = private_dir(ROOT / 'runtime/server-url/oauth')
     try:
         record = private_json(directory / (args.request + '.request.json'))
-        if record['expires'] <= time.time() or record['redirect_uri'] != CHATGPT_REDIRECT:
+        endpoint = private_json(ROOT / 'runtime/server-url/endpoint.json')
+        if (record['expires'] <= time.time() or record['redirect_uri'] != CHATGPT_REDIRECT
+                or record['scope'] != SCOPE or record['resource'] != endpoint['origin']):
             raise ValueError('Expired or unapproved redirect')
     except (OSError, ValueError, KeyError):
         parser.exit(1, 'No current authorized ChatGPT request found.\n')
@@ -31,7 +38,7 @@ def main():
     print('Return to:', record['redirect_uri'])
     print('Permission: owner WeChat messages, replies, attachments and events.')
     print('Check that the same request ID is visible in your ChatGPT authorization browser tab.')
-    if input('Type APPROVE to authorize this one connection: ').strip() != 'APPROVE':
+    if not args.yes and input('Type APPROVE to authorize this one connection: ').strip() != 'APPROVE':
         parser.exit(1, 'No authorization granted.\n')
     private_json(directory / (args.request + '.approval.json'),
                  {'request_id': args.request, 'challenge': record['approval_challenge']})

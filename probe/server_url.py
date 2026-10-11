@@ -2,7 +2,8 @@
 
 Public OAuth requests never grant access. The Windows owner must approve each
 link using a private local file, bound to one request, redirect and S256 PKCE.
-This foreground validation gateway intentionally keeps tokens in memory.
+The default validation gateway keeps tokens in memory. A fixed-origin gateway
+can opt into private storage of client metadata and token hashes for restart.
 """
 import base64
 import hashlib
@@ -23,6 +24,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from .platform_io import private_dir, open_private
 from .outbound import MAX_RPC_BYTES
 from .probe import VERSION
+from .oauth_state import OAuthState
 
 SCOPE = 'weixin:owner'
 CHATGPT_REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect'
@@ -50,12 +52,30 @@ def one(values, key, default=None):
 
 
 class OwnerOAuth:
-    def __init__(self, directory, clock=time.time, redirects=(CHATGPT_REDIRECT,)):
+    def __init__(self, directory, clock=time.time, redirects=(CHATGPT_REDIRECT,), persistent=False):
         self.directory = private_dir(directory)
         self.clock, self.redirects = clock, frozenset(redirects)
         self.origin = None
         self.clients, self.pending, self.codes, self.tokens, self.refresh = {}, {}, {}, {}, {}
         self.lock = threading.RLock()
+        self.store = OAuthState(self.directory, self.redirects, SCOPE, MAX_RECORDS) if persistent else None
+        self.state_fault = False
+
+    def require_available(self):
+        if self.state_fault: raise OAuthError('authorization_state_unavailable', 503)
+
+    def close(self):
+        self.state_fault = True
+        if self.store: self.store.close()
+
+    def persist(self):
+        if self.store:
+            try:
+                self.store.save({'version': 1, 'origin': self.origin, 'clients': self.clients,
+                                 'tokens': self.tokens, 'refresh': self.refresh})
+            except (OSError, ValueError):
+                self.state_fault = True
+                raise OAuthError('authorization_state_unavailable', 503) from None
 
     def configure_origin(self, origin):
         parts = urlsplit(origin)
@@ -64,19 +84,32 @@ class OwnerOAuth:
                 or not re.fullmatch(r'[a-z0-9][a-z0-9.-]+', parts.hostname)):
             raise ValueError('Canonical HTTPS origin required')
         with self.lock:
+            self.require_available()
             if self.origin and self.origin != origin:
                 raise ValueError('Origin cannot change within a live authorization session')
+            if self.origin is None and self.store:
+                try: state = self.store.load(origin)
+                except (OSError, ValueError):
+                    self.close()
+                    raise
+                if state:
+                    self.clients, self.tokens, self.refresh = state['clients'], state['tokens'], state['refresh']
             self.origin = origin
+            self.prune()
 
     def prune(self):
+        self.require_available()
         now = self.clock()
+        durable_changed = False
         for collection in (self.pending, self.codes, self.tokens, self.refresh):
             for key, record in list(collection.items()):
                 if record['expires'] <= now:
                     del collection[key]
+                    if collection is self.tokens or collection is self.refresh: durable_changed = True
                     if collection is self.pending:
                         for suffix in ('request', 'approval'):
                             (self.directory / (key + '.' + suffix + '.json')).unlink(missing_ok=True)
+        if durable_changed: self.persist()
 
     def metadata(self):
         return {'issuer': self.origin, 'authorization_endpoint': self.origin + '/oauth/authorize',
@@ -91,6 +124,7 @@ class OwnerOAuth:
 
     def register(self, data):
         with self.lock:
+            self.require_available()
             if len(self.clients) >= MAX_RECORDS:
                 raise OAuthError('registration_limit', 429)
             redirects = data.get('redirect_uris')
@@ -108,6 +142,7 @@ class OwnerOAuth:
                       'grant_types': ['authorization_code', 'refresh_token'],
                       'response_types': ['code'], 'client_id_issued_at': int(self.clock())}
             self.clients[client_id] = result
+            self.persist()
             return result
 
     def authorize(self, values):
@@ -208,12 +243,15 @@ class OwnerOAuth:
             common = {'client_id': client_id, 'resource': resource, 'scope': record['scope']}
             self.tokens[self.digest(access)] = dict(common, expires=self.clock() + 3600)
             self.refresh[self.digest(refresh)] = dict(common, expires=self.clock() + 86400)
+            # Commit rotation before exposing the new tokens to the client.
+            self.persist()
             return {'access_token': access, 'refresh_token': refresh,
                     'token_type': 'Bearer', 'expires_in': 3600, 'scope': SCOPE}
 
     def authenticated(self, authorization):
         with self.lock:
-            self.prune()
+            try: self.prune()
+            except OAuthError: return False
             if not isinstance(authorization, str) or not authorization.startswith('Bearer '):
                 return False
             token = authorization[7:]

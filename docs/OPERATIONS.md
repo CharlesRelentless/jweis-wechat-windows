@@ -1,6 +1,6 @@
 # 更新、恢复与到期
 
-Windows 安装和 Server URL 运行入口见 [WINDOWS.md](WINDOWS.md) 与 [SERVER-URL.md](SERVER-URL.md)。下方 systemd 命令只适用于 Linux。Windows 前台进程停止后不会自动恢复，临时地址与内存 OAuth 需重新登记/批准；复用微信绑定和消息数据库，不清空状态。
+Windows 安装和 Server URL 运行入口见 [WINDOWS.md](WINDOWS.md) 与 [SERVER-URL.md](SERVER-URL.md)。下方 systemd 命令只适用于 Linux。默认 Windows 前台进程停止后不会自动恢复，临时地址与内存 OAuth 需重新登记/批准；明确启用固定入口及授权持久化后，同一 origin 下的未到期 grant 可恢复，但进程自启动仍是独立部署步骤。复用微信绑定和消息数据库，不清空状态。
 
 ## 每次检查
 
