@@ -1,0 +1,7 @@
+# Direct and transitive dependencies. Windows includes qrcode color support.
+cryptography==50.0.1
+Pillow==12.3.0
+cffi==2.1.1
+pycparser==3.0
+qrcode==8.2
+colorama==0.4.6; sys_platform == "win32"

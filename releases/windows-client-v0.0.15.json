@@ -1,0 +1,11 @@
+{
+  "release": "v0.0.15",
+  "url": "https://github.com/openai/tunnel-client/releases/download/v0.0.15/tunnel-client-v0.0.15-windows-amd64.zip",
+  "sha256": "3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1",
+  "bytes": 28098744,
+  "source": "GitHub official openai/tunnel-client release asset digest",
+  "files": {
+    "tunnel-client.exe": "1946de55a038313a9b9b2458d05fe1719fa9cf1f20a94dd5f38fc26a98bfdd42",
+    "cloudflared.exe": "cd0bc49aec24d0d62a37b6e842dad46000f7b401f6167b4cbace4e170819c9a2"
+  }
+}
