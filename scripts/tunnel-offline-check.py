@@ -23,6 +23,33 @@ from probe.client_integrity import verify_bundle
 SESSION_HEADERS={}
 
 
+def read_json(body, stage):
+    try: return json.loads(body)
+    except ValueError:
+        raise RuntimeError(f'Offline {stage} returned invalid JSON') from None
+
+
+def wait_connection_info(path, process, timeout=17):
+    # A URL file can be observed during publication. Existence alone is not
+    # readiness; wait for a complete JSON document without retrying MCP calls.
+    deadline=time.monotonic()+timeout
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError('Official local proxy exited before readiness')
+        try:
+            info=json.loads(path.read_text(encoding='utf-8'))
+        except (FileNotFoundError, json.JSONDecodeError):
+            if time.monotonic()>=deadline:
+                raise TimeoutError('Official local proxy connection-info publication timeout') from None
+            time.sleep(.05)
+            continue
+        for field in ('mcp_url','health_url'):
+            value=info.get(field) if isinstance(info,dict) else None
+            if not isinstance(value,str) or not value.startswith('http://127.0.0.1:'):
+                raise ValueError('Offline connection info requires loopback URLs')
+        return info
+
+
 @contextlib.contextmanager
 def temporary_fixture():
     temp=tempfile.TemporaryDirectory(prefix='dots-native-client-')
@@ -67,7 +94,7 @@ def local_request(url, payload=None):
         if payload:
             if not body: return response.status,None
             if body.startswith(b'data:'): body=body.split(b'data:',1)[1].strip()
-            return response.status,json.loads(body)
+            return response.status,read_json(body,payload.get('method','notification'))
         return response.status,None
 
 
@@ -99,7 +126,7 @@ def run_check():
                 del env[name]
         doctor=subprocess.run([str(client),'doctor','--profile-file',str(runtime/'profile.yaml'),'--json'],
                               env=env,cwd=root,text=True,capture_output=True,timeout=15)
-        report=json.loads(doctor.stdout)
+        report=read_json(doctor.stdout,'doctor')
         summary['doctor_result']=report['result']
         summary['doctor_checks']={x['id']:x['status'] for x in report['checks']}
         if doctor.returncode or report['result']!='ok': raise RuntimeError('Offline doctor failed')
@@ -112,12 +139,7 @@ def run_check():
                 '--readiness-timeout','12s','--duration','25s'],
                 env=env,cwd=root,stdout=output,stderr=output)
             try:
-                deadline=time.monotonic()+17
-                while not info_file.exists():
-                    if process.poll() is not None: raise RuntimeError('Official local proxy exited before readiness')
-                    if time.monotonic()>deadline: raise TimeoutError('Official local proxy readiness timeout')
-                    time.sleep(.1)
-                info=json.loads(info_file.read_text(encoding='utf-8'))
+                info=wait_connection_info(info_file,process)
                 parts=urlsplit(info['health_url'])
                 health_origin=parts.scheme+'://'+parts.netloc
                 summary['health']={route:local_request(health_origin+route)[0]

@@ -1,9 +1,12 @@
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -12,6 +15,44 @@ from probe.platform_io import private_dir
 from probe.probe import Probe
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+class ConnectionPublicationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec=importlib.util.spec_from_file_location('offline_check',ROOT/'scripts/tunnel-offline-check.py')
+        cls.check=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.check)
+
+    def test_partial_publication_waits_for_complete_loopback_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'connection.json'
+            path.write_text('',encoding='utf-8')
+            expected={'mcp_url':'http://127.0.0.1:12345/mcp','health_url':'http://127.0.0.1:12346'}
+            def publish():
+                time.sleep(.03)
+                path.write_text('{"mcp_url":',encoding='utf-8')
+                time.sleep(.03)
+                path.write_text(json.dumps(expected),encoding='utf-8')
+            writer=threading.Thread(target=publish)
+            writer.start()
+            try:
+                self.assertEqual(self.check.wait_connection_info(path,mock.Mock(poll=lambda:None),timeout=2),expected)
+            finally: writer.join(timeout=2)
+
+    def test_permanently_incomplete_publication_fails_with_bounded_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'connection.json'
+            path.write_text('{',encoding='utf-8')
+            with self.assertRaisesRegex(TimeoutError,'publication timeout'):
+                self.check.wait_connection_info(path,mock.Mock(poll=lambda:None),timeout=.05)
+
+    def test_valid_non_loopback_publication_is_rejected_without_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'connection.json'
+            path.write_text(json.dumps({'mcp_url':'https://example.com/mcp','health_url':'http://127.0.0.1:12346'}),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'loopback'):
+                self.check.wait_connection_info(path,mock.Mock(poll=lambda:None),timeout=2)
 
 
 class ClientIntegrityTests(unittest.TestCase):
