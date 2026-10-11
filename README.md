@@ -18,6 +18,8 @@ flowchart LR
 
 只有桥接能收发消息，不足以证明 dot 能读本地文件。dot 必须拥有实际可用的原生电脑连接和执行权限。详见 [本地文件能力与修复](docs/NATIVE-LOCAL-FILES.md)。
 
+检索 Codex 项目中的已有对话可使用原生对话工具；隔离执行环境的控制连接失败时，原本机任务可调用 [只读 stdio 检索脚本](docs/CODEX-HISTORY.md)。脚本按获准项目和指定标题读取历史，不向源对话追加消息；原 dot 的实际调用与微信收件仍需单独验收。
+
 ## Windows 快速开始
 
 需要 Windows AMD64、Python 3.10+、出站网络，以及支持自定义 MCP 和 MCP Events 的账号。当前本机验证使用 Python 3.13.12；其他版本由 CI 分别验证。持续事件执行取决于产品和账号权限。
