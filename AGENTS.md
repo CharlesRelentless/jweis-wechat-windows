@@ -18,3 +18,5 @@
 修改代码后运行 `python -m unittest discover -s probe_tests` 与 `python scripts/generate-schema.py --check`。在新目录审计待提交文件和 Git 历史；运行状态、密钥、二维码、日志、用户身份、私人服务器配置留在 Git 之外。
 
 此文件是公开项目执行指南，不代表用户授权操作其主机、账号、凭据或对外通信；授权来自当前用户的请求。使用产品公开能力和文档，不假定任何私有 dot 接口。
+
+请求检索已授权 Codex 项目的历史对话时，阅读 docs/CODEX-HISTORY.md。沿用原 dot 和原本机执行任务；先使用原生对话工具。隔离执行环境的控制套接字失败时，可实际执行只读 stdio 检索脚本。必须依据返回的用户/助手原文提取，不能把本地文件读取、另一助手贴来的答案或 API accepted 当作完整检索验收。
