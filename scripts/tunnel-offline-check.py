@@ -47,6 +47,9 @@ def local_request(url, payload=None):
     # Explicitly bypass proxy variables for this loopback-only check.
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try: response=opener.open(request,timeout=8)
+    except TimeoutError:
+        method=payload.get('method') if payload else urlsplit(url).path
+        raise TimeoutError(f'Offline {method} request timed out') from None
     except urllib.error.HTTPError as error:
         # This process uses only synthetic fixtures and an official loopback
         # proxy. Project just the JSON error message, never request headers.

@@ -83,6 +83,16 @@ class _WinFiles:
             try: self.sid = value.value
             finally: self.free(value)
         finally: self.close(token)
+        # Windows can render the same token SID as an SDDL alias (for example
+        # LA for the built-in Administrator account). Derive the trusted spelling
+        # from our own descriptor; never broaden access to a fixed alias list.
+        with self.descriptor() as sd:
+            value = w.LPWSTR()
+            self.check(self.to_sddl(sd, 1, 4, ctypes.byref(value), None))
+            try:
+                self.allowed_sddl_sids = frozenset(
+                    ace.split(';')[-1] for ace in re.findall(r'\(([^)]*)\)', value.value))
+            finally: self.free(value)
 
     @staticmethod
     def check(value):
@@ -140,7 +150,7 @@ class _WinFiles:
                 text = value.value
                 aces = re.findall(r"\(([^)]*)\)", text)
                 return text.startswith("D:P") and len(aces) == 2 and all(
-                    a.split(";")[0] == "A" and a.split(";")[-1] in (self.sid, "SY") for a in aces)
+                    a.split(";")[0] == "A" and a.split(";")[-1] in self.allowed_sddl_sids for a in aces)
             finally:
                 if value: self.free(value)
                 self.free(sd)

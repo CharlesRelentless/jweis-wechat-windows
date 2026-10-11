@@ -57,5 +57,36 @@ class PlatformIOTests(unittest.TestCase):
     def test_existing_directory_cannot_be_opened_as_file(self):
         with self.assertRaises(OSError): open_private(self.root, os.O_WRONLY)
 
+    @unittest.skipUnless(WINDOWS, "Windows native ACL principal check")
+    def test_administrators_group_is_not_treated_as_the_private_owner(self):
+        import ctypes
+        from probe.platform_io import win_files
+        path = self.root / 'group-readable.txt'
+        with os.fdopen(open_private(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY), 'wb') as f:
+            f.write(b'synthetic ACL fixture')
+        win = win_files()
+        descriptor = ctypes.c_void_p()
+        # BA is a group; LA, when it is the current token, is an account alias.
+        # Exactly two ACEs must not make a group-readable file owner-private.
+        win.check(win.from_sddl('D:P(A;;FA;;;BA)(A;;FA;;;SY)', 1,
+                               ctypes.byref(descriptor), None))
+        try:
+            with win.handle(path, 0x00060000) as handle:
+                present, defaulted = win.w.BOOL(), win.w.BOOL()
+                acl = ctypes.c_void_p()
+                win.check(win.get_dacl(descriptor, ctypes.byref(present), ctypes.byref(acl),
+                                       ctypes.byref(defaulted)))
+                code = win.set_security(handle, 1, 4 | 0x80000000, None, None, acl, None)
+                if code: raise ctypes.WinError(code)
+                try:
+                    try: self.assertFalse(is_private(path))
+                    except PermissionError:
+                        # An unelevated owner can lose READ_CONTROL after the
+                        # group ACL replaces its ACE. Denial also fails closed.
+                        pass
+                finally: win.protect_handle(handle)
+        finally:
+            win.free(descriptor)
+
 
 if __name__ == "__main__": unittest.main()

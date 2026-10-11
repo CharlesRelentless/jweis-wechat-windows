@@ -54,6 +54,21 @@ jobs:
           New-Item -ItemType Directory -Path $taskTemp -Force | Out-Null
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "TEMP=$taskTemp" -Encoding utf8
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "TMP=$taskTemp" -Encoding utf8
+      - name: Verify owner ACL representation
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import tempfile
+          from probe.platform_io import win_files, private_dir, is_private
+          win = win_files()
+          print('owner_rid=' + win.sid.rsplit('-', 1)[-1])
+          print('trusted_sddl_principals=' + ','.join(sorted('literal-SID' if x.startswith('S-') else x for x in win.allowed_sddl_sids)))
+          with tempfile.TemporaryDirectory() as folder:
+              path = private_dir(Path(folder) / 'acl-probe')
+              assert is_private(path), 'Current owner plus SYSTEM must be private'
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Native owner ACL check failed' }
       - run: python -m unittest discover -s probe_tests
       - run: python scripts/generate-schema.py --check
       - run: python scripts/outbound-resource-check.py
