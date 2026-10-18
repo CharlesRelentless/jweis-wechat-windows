@@ -14,6 +14,12 @@ systemctl show dots-wechat-bridge.service --property=ActiveState,SubState,UnitFi
 
 macOS 前台部署使用 `.venv/bin/python scripts/safe-status.py --state-dir runtime/state`，无须服务用户或 systemd。工具 get_weixin_status 查看MCP实际可用性。检查health/ready200、last_error、轮询时间、一个weixin.message订阅和发送终态。原始数据库、附件、QR、profile与日志保持私有。
 
+`safe-status.py` 的 `account_status` 是数据库中保留的绑定状态，停止后也可能仍为 `ready`。请同时查看新增的 `runtime_status`、`gateway_health`、`poll_health` 和 `subscription_health`；不能只据 `ready` 判断仍在线。
+
+Server URL 部署优先使用同一 runtime 下私有 `server-url/endpoint.json` 的本机端口，忽略旧的 Tunnel 健康端口。当前 endpoint 损坏或不可读时失败关闭；只有它不存在时才兼容旧的 `service-health.url`。探测固定为本机 HTTP，不访问记录中的公网地址，也不输出地址或授权值。
+
+运行状态 `PASS` 要求 health/ready 均为200、绑定为 ready、最近180秒内有有效轮询，以及恰好一个有效 `weixin.message` 订阅。轮询明显超前、缺失、陈旧、租约失效或重复均不能报告正常；尚未绑定的初始化状态为 `WARN`。这些是采样时刻的组件检查，仍不能替代真实 MCP 调用、端到端收件或无人值守恢复验收。
+
 ## 更新
 
 先在独立候选目录跑测试和schema检查。更新源码前确保没有sending/preparing。备份原源码并使用SQLite自身backup机制保存私有一致快照，保留当前state/secrets/profile。只停本服务，切换代码后启动，验证health/MCP/计数保留，再在既有插件设置刷新工具。服务暂停时读操作可重试；写操作始终用原稳定ID查状态。
