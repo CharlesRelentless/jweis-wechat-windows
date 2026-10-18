@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from probe.server_url import OwnerOAuth, OAuthError, Gateway, StdioBridge, private_json, SCOPE, CHATGPT_REDIRECT
@@ -155,10 +156,15 @@ class HTTPTests(unittest.TestCase):
                                    {'jsonrpc': '2.0', 'id': 1, 'method': name, 'params': params or {}}, headers)
         return status, json.loads(body)
 
-    def test_every_rpc_requires_authentication(self):
-        for method in ('server/discover', 'initialize', 'tools/list', 'tools/call',
-                       'events/list', 'events/subscribe', 'events/unsubscribe'):
-            self.assertEqual(self.rpc(method)[0], 401)
+    def test_rpc_authentication_is_rejected_before_body_or_worker_call(self):
+        # Authentication is checked before any JSON-RPC method is parsed.
+        # Do not race unread request bytes against an early Windows close.
+        with mock.patch.object(self.bridge,'rpc') as forwarded:
+            for authorization in (None,'Bearer invalid-fixture-token'):
+                headers={'Content-Length':'1048576','Content-Type':'application/json'}
+                if authorization: headers['Authorization']=authorization
+                self.assertEqual(self.send('POST','/mcp',None,headers)[0],401)
+            forwarded.assert_not_called()
         status, headers, _ = self.send('GET', '/mcp')
         self.assertEqual(status, 401)
         self.assertIn('resource_metadata=', headers['WWW-Authenticate'])
@@ -209,10 +215,12 @@ class HTTPTests(unittest.TestCase):
     def test_oversize_and_non_json_rejected_after_auth(self):
         from probe.outbound import MAX_RPC_BYTES
         token = self.exchange(self.approved_code())['access_token']
-        headers = {'Authorization': 'Bearer ' + token, 'Content-Length': str(MAX_RPC_BYTES + 1)}
-        self.assertEqual(self.send('POST', '/mcp', {}, headers)[0], 413)
-        headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'text/plain'}
-        self.assertEqual(self.send('POST', '/mcp', {}, headers)[0], 415)
+        # Rejections are deliberately sent before body consumption.
+        headers = {'Authorization': 'Bearer ' + token, 'Content-Length': str(MAX_RPC_BYTES + 1),
+                   'Content-Type': 'application/json'}
+        self.assertEqual(self.send('POST', '/mcp', None, headers)[0], 413)
+        headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'text/plain', 'Content-Length': '2'}
+        self.assertEqual(self.send('POST', '/mcp', None, headers)[0], 415)
 
     def test_invalid_notification_does_not_desynchronize_worker(self):
         token = self.exchange(self.approved_code())['access_token']
