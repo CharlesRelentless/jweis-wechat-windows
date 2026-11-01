@@ -113,6 +113,17 @@ class SafeStatusTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform=='win32' and (ROOT/'bin/tunnel-client.exe').is_file(),
                      'Optional verified official Windows client is not installed')
 class OfficialTunnelTests(unittest.TestCase):
+    def test_official_client_accepts_confirmed_env_without_another_key_file(self):
+        result=subprocess.run([sys.executable,str(ROOT/'scripts/tunnel-offline-check.py'),'--confirmed-env'],
+                              text=True,encoding='utf-8',capture_output=True,timeout=35)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        report=json.loads(result.stdout)
+        self.assertEqual(report['doctor_result'],'ok')
+        self.assertTrue(report['confirmed_env_mode'])
+        self.assertTrue(report['second_key_file_absent'])
+        self.assertEqual(report['health'],{'/healthz':200,'/readyz':200})
+        self.assertTrue(report['actual_status_tool_call'])
+
     def test_official_client_discovers_events_and_forwards_actual_tool_call(self):
         result=subprocess.run([sys.executable,str(ROOT/'scripts/tunnel-offline-check.py')],
                               text=True,encoding='utf-8',capture_output=True,timeout=35)

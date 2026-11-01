@@ -12,6 +12,7 @@ import time
 from urllib.parse import urlsplit
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from probe.platform_io import configure_stdio, open_private, safe_path
+from probe.native_recovery import sample_health
 
 POLL_STALE_AFTER_SECONDS = 180
 POLL_ERRORS = frozenset({
@@ -30,6 +31,23 @@ def read_private_text(path, limit=4096):
 
 
 def resolve_health_port(root):
+    official = False
+    try:
+        if not (root.parent/'transport.json').exists(): raise FileNotFoundError()
+        transport=json.loads(read_private_text(root.parent/'transport.json'))
+        if transport.get('kind')!='official_tunnel': raise ValueError()
+        official=True
+    except FileNotFoundError:
+        pass
+    except (OSError,ValueError,AttributeError):
+        return None,'invalid_transport_metadata'
+    if official:
+        try:
+            p=urlsplit(read_private_text(root/'service-health.url').strip())
+            if (p.scheme!='http' or p.hostname!='127.0.0.1' or not p.port or p.path not in ('','/')
+                    or p.username or p.password or p.query or p.fragment): raise ValueError()
+            return p.port,'official_tunnel'
+        except (OSError,ValueError): return None,'invalid_official_health_file'
     # A malformed current endpoint must not fall back to a healthy old port.
     try:
         metadata=json.loads(read_private_text(root.parent/'server-url/endpoint.json'))
@@ -62,7 +80,7 @@ def probe_health(port):
     return result
 
 
-def build_status(state_dir, *, now=None, health_probe=probe_health):
+def build_status(state_dir, *, now=None, health_probe=probe_health, control_probe=sample_health):
     root=safe_path(state_dir)
     now=time.time() if now is None else now
     database=safe_path(root/'probe.sqlite')
@@ -99,6 +117,11 @@ def build_status(state_dir, *, now=None, health_probe=probe_health):
     result['gateway_health']=('PASS' if result['health']=={'/healthz':200,'/readyz':200}
                               else 'WARN' if source=='not_configured' else 'FAIL')
     checks=[result[x] for x in ('gateway_health','poll_health','subscription_health')]
+    if source=='official_tunnel':
+        sample=control_probe(root/'service-health.url')
+        result['control_plane_health']='PASS' if sample['healthy'] else 'FAIL'
+        result['control_plane_reason']=sample['reason']
+        checks.append(result['control_plane_health'])
     result['runtime_status']=('FAIL' if 'FAIL' in checks or result['account_status']=='auth_required'
                               else 'WARN' if 'WARN' in checks or not ready else 'PASS')
     try:

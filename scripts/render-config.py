@@ -11,7 +11,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from probe.platform_io import WINDOWS, private_dir, open_private, safe_path
 
 
-def render(root, tunnel_id, callback_hosts, replace=False, discover_callback=False):
+def render(root, tunnel_id, callback_hosts, replace=False, discover_callback=False,
+           confirmed_env=False):
     root=safe_path(root)
     if not WINDOWS and not re.fullmatch(r'/[A-Za-z0-9_./-]+',str(root)):
         raise ValueError('Use an absolute installation path without spaces or shell metacharacters')
@@ -33,14 +34,18 @@ def render(root, tunnel_id, callback_hosts, replace=False, discover_callback=Fal
             return '"'+value.replace('\\','\\\\').replace('"','\\"')+'"'
         command=' '.join(quote_arg(value) for value in args)
         q=lambda value: json.dumps(value,ensure_ascii=False)
+        key_reference = ('env:JWEIS_TUNNEL_API_KEY' if confirmed_env else
+                         'file:'+(runtime/'secrets/runtime.key').as_posix())
         profile='\n'.join([
             'config_version: 1','control_plane:','  tunnel_id: '+tunnel_id,
-            '  api_key: '+q('file:'+(runtime/'secrets/runtime.key').as_posix()),
+            '  api_key: '+q(key_reference),
             'mcp:','  commands:','    - channel: main','      command: '+q(command),
             'health:','  listen_addr: 127.0.0.1:0','  url_file: '+q((runtime/'state/service-health.url').as_posix()),
             'log:','  level: warn','  format: json',''])
         files=[('profile.yaml',profile)]
     else:
+        if confirmed_env:
+            raise ValueError('Confirmed env mode currently requires the Windows launcher')
         profile=(root/'config/tunnel-profile.yaml.example').read_text(encoding='utf-8').replace('__TUNNEL_ID__',tunnel_id).replace('__ROOT__',str(root)).replace('__MCP_COMMAND__',shlex.join(args))
         service=(root/'config/dots-wechat-bridge.service.example').read_text(encoding='utf-8').replace('__ROOT__',str(root))
         files=[('profile.yaml',profile),('dots-wechat-bridge.service',service)]
@@ -58,9 +63,11 @@ def main():
     destination.add_argument('--callback-host',action='append')
     destination.add_argument('--discover-callback',action='store_true',help='Deny all callbacks while discovering the authorized subscription hostname')
     parser.add_argument('--replace',action='store_true',help='Update only rendered config; preserves key and database')
+    parser.add_argument('--confirmed-env',action='store_true',help='Use the confirmed private env file through the guarded Windows launcher')
     args=parser.parse_args()
     try:
-        runtime=render(args.root,args.tunnel_id,args.callback_host or [],args.replace,args.discover_callback)
+        runtime=render(args.root,args.tunnel_id,args.callback_host or [],args.replace,
+                       args.discover_callback,args.confirmed_env)
         print('Rendered private configuration in '+str(runtime))
     except (ValueError,OSError) as exc:
         parser.exit(1,type(exc).__name__+': config not generated; check inputs/file ownership\n')
