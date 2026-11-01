@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/rdcamelot/codex-durable-relay",
+  "commit": "e5f82131ba649737cc60893ae19ce90f0e55aa37",
+  "license": "MIT",
+  "distribution": "Reviewed source snapshot with local recovery fixes; built payloads and machine state are excluded.",
+  "patch_notes": "docs/PATCHES.md"
+}

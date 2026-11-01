@@ -18,6 +18,8 @@ flowchart LR
 
 只有桥接能收发消息，不足以证明 dot 能读本地文件。dot 必须拥有实际可用的原生电脑连接和执行权限。详见 [本地文件能力与修复](docs/NATIVE-LOCAL-FILES.md)。
 
+Jweis 读取、接续已有 Codex 对话的分层排查与原生验收见 [Codex 对话连接指南](docs/CODEX-CONVERSATIONS.md)。针对经过核验的 durable 代理连接问题，仓库包含独立可选的 [Windows 中继修正版](windows/codex-durable-relay/README.md)，含源码、测试和恢复入口；它不由微信桥接自动安装，也不能代替路径解析或微信插件故障的修复。
+
 ## Windows 快速开始
 
 需要 Windows AMD64、Python 3.10+、出站网络，以及支持自定义 MCP 和 MCP Events 的账号。当前本机验证使用 Python 3.13.12；其他版本由 CI 分别验证。持续事件执行取决于产品和账号权限。
