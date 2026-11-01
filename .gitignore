@@ -17,3 +17,4 @@ bin/
 docs/windows-verification.json
 docs/windows-status.json
 docs/*-verification.json
+docs/tunnel-offline-verification-env.json

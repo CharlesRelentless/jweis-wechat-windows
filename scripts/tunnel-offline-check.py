@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real official Windows client -> real bridge; local synthetic control plane only."""
+import argparse
 import contextlib
 import importlib.util
 import json
@@ -20,6 +21,7 @@ sys.path.insert(0,str(ROOT))
 from probe.platform_io import private_dir, open_private, is_private, acquire_worker_lock
 from probe.windows_job import WindowsJob
 from probe.client_integrity import verify_bundle
+from probe.tunnel_runtime_env import official_environment
 SESSION_HEADERS={}
 
 
@@ -98,7 +100,7 @@ def local_request(url, payload=None):
         return response.status,None
 
 
-def run_check():
+def run_check(confirmed_env=False):
     client=verify_bundle(ROOT)
     spec=importlib.util.spec_from_file_location('render_config',ROOT/'scripts/render-config.py')
     renderer=importlib.util.module_from_spec(spec); spec.loader.exec_module(renderer)
@@ -113,14 +115,25 @@ def run_check():
         deps=private_dir(root/'.venv/Lib/site-packages')
         (deps/'offline-dependencies.pth').write_text(sysconfig.get_path('purelib')+'\n',encoding='utf-8')
         shutil.copytree(ROOT/'probe',root/'probe',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-        runtime=renderer.render(root,'tunnel_'+'2'*32,[],discover_callback=True)
-        with os.fdopen(open_private(runtime/'secrets/runtime.key',os.O_WRONLY|os.O_CREAT|os.O_EXCL),
-                       'w',encoding='utf-8') as output:
-            output.write('offline-synthetic-key-not-an-account-credential\n')
+        fixture_id='tunnel_'+'2'*32
+        runtime=renderer.render(root,fixture_id,[],discover_callback=True,
+                                confirmed_env=confirmed_env)
+        if confirmed_env:
+            with os.fdopen(open_private(runtime/'official-tunnel-activation.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL),
+                           'w',encoding='utf-8') as output:
+                json.dump({'tunnel_id':fixture_id,'cost_status':'confirmed_free',
+                           'online_start_authorized':True},output)
+            with os.fdopen(open_private(runtime/'secrets/openai-tunnel.env',os.O_WRONLY|os.O_CREAT|os.O_EXCL),
+                           'w',encoding='utf-8') as output:
+                output.write('OPENAI_API_KEY=sk-offline-synthetic-not-an-account-credential\n')
+        else:
+            with os.fdopen(open_private(runtime/'secrets/runtime.key',os.O_WRONLY|os.O_CREAT|os.O_EXCL),
+                           'w',encoding='utf-8') as output:
+                output.write('offline-synthetic-key-not-an-account-credential\n')
         # Limit only this check's descendants. This script itself must run as a
         # separate process because a kill-on-close Job includes the launcher.
         job=WindowsJob()
-        env=dict(os.environ)
+        env=official_environment(root,runtime/'profile.yaml') if confirmed_env else dict(os.environ)
         for name in list(env):
             if name.startswith(('CONTROL_PLANE_','MCP_','TUNNEL_','TUNNEL_CLIENT_','HARPOON_','CLOUDFLARED_','HEALTH_','LOG_','ADMIN_UI_','PROXY_')) or name in ('OPENAI_API_KEY','OPENAI_ADMIN_KEY'):
                 del env[name]
@@ -164,6 +177,9 @@ def run_check():
                 summary['actual_status_tool_call']='structuredContent' in status and not status.get('isError',False)
                 summary['private_profile']=is_private(runtime/'profile.yaml')
                 summary['private_database']=is_private(runtime/'state/probe.sqlite')
+                summary['confirmed_env_mode']=confirmed_env
+                if confirmed_env:
+                    summary['second_key_file_absent']=not (runtime/'secrets/runtime.key').exists()
                 summary['windows_job']=job.metrics()
                 if summary['health']!={'/healthz':200,'/readyz':200}: raise RuntimeError('Local health not ready')
                 if not summary['actual_status_tool_call'] or not summary['message_event']: raise RuntimeError('Missing real MCP capability')
@@ -180,9 +196,13 @@ def run_check():
 
 
 if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--confirmed-env',action='store_true',help='Exercise the guarded private env-file adapter with synthetic credentials')
+    args=parser.parse_args()
     try:
-        summary=run_check()
-        (ROOT/'docs/tunnel-offline-verification.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+        summary=run_check(args.confirmed_env)
+        report_name='tunnel-offline-verification-env.json' if args.confirmed_env else 'tunnel-offline-verification.json'
+        (ROOT/'docs'/report_name).write_text(json.dumps(summary,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         print(json.dumps(summary,ensure_ascii=False))
     except Exception as error:
         # Controlled categories only: never emit complete runtime logs.
