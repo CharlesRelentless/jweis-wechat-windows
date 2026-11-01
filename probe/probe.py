@@ -27,10 +27,12 @@ try:
     from .weixin import WeixinStore, WeixinError, MESSAGE_EVENT
     from .media import MediaStore
     from .outbound import OutboundStore, upload_tools, MAX_RPC_BYTES
+    from .local_files import LocalReadOnly, LocalFileError, local_read_tool
 except ImportError:
     from weixin import WeixinStore, WeixinError, MESSAGE_EVENT
     from media import MediaStore
     from outbound import OutboundStore, upload_tools, MAX_RPC_BYTES
+    from local_files import LocalReadOnly, LocalFileError, local_read_tool
 
 VERSION = "2026-07-28"
 EVENT_NAME = "test.ping"
@@ -321,9 +323,10 @@ def post_https(url, body, request_headers, allowed_hosts, proxy=None):
 
 
 class Probe:
-    def __init__(self, directory, post=None, allowed_hosts=(), clock=time.time, weixin_client=None):
+    def __init__(self, directory, post=None, allowed_hosts=(), clock=time.time, weixin_client=None, local_files=None):
         directory = private_dir(directory)
         self.directory = directory
+        self.local_files = local_files
         self.lock = threading.RLock()
         self.clock = clock
         self.post = post or (lambda url, body, hdrs: post_https(
@@ -515,7 +518,7 @@ class Probe:
         return True
 
     @staticmethod
-    def tools():
+    def tools(local_files=False):
         annotations = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
         return [
             {"name": "acknowledge_test_ping", "description": "Record receipt of a test.ping event using its eventId and data.nonce. Idempotent; sends no Weixin messages.",
@@ -540,7 +543,7 @@ class Probe:
              "inputSchema": {"type": "object", "properties": {"notification_id": {"type": "string", "minLength": 1, "maxLength": 128}, "text": {"type": "string", "minLength": 1}}, "required": ["notification_id", "text"], "additionalProperties": False}, "annotations": {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": True}},
             {"name": "get_weixin_send_status", "description": "Read exact outgoing text and accepted/error/uncertain status for a reply or explicitly requested notification. delivered is unknown without an upstream delivery receipt.",
              "inputSchema": {"type": "object", "properties": {"send_id": {"type": "string"}}, "required": ["send_id"], "additionalProperties": False}, "annotations": {"readOnlyHint": True, "openWorldHint": False}},
-        ] + upload_tools()
+        ] + upload_tools() + ([local_read_tool()] if local_files else [])
 
     def rpc(self, request):
         request_id = request.get("id") if isinstance(request, dict) else None
@@ -554,10 +557,10 @@ class Probe:
                 return None
             if method == "server/discover":
                 result = {"resultType": "complete", "supportedVersions": [VERSION],
-                          "serverInfo": {"name": "dots-wechat-bridge", "version": "0.5.0"},
+                          "serverInfo": {"name": "dots-wechat-bridge", "version": "0.5.0+windows-local-read" if self.local_files is not None else "0.5.0"},
                           "capabilities": {"tools": {}, "events": {}}}
             elif method == "initialize":
-                result = {"protocolVersion": VERSION, "serverInfo": {"name": "dots-wechat-bridge", "version": "0.5.0"},
+                result = {"protocolVersion": VERSION, "serverInfo": {"name": "dots-wechat-bridge", "version": "0.5.0+windows-local-read" if self.local_files is not None else "0.5.0"},
                           "capabilities": {"tools": {}, "events": {}}}
             elif method == "ping":
                 result = {}
@@ -568,17 +571,26 @@ class Probe:
             elif method == "events/unsubscribe":
                 result = self.unsubscribe(params)
             elif method == "tools/list":
-                result = {"tools": self.tools()}
+                result = {"tools": self.tools(local_files=self.local_files is not None)}
             elif method == "tools/call":
                 args = params.get("arguments", {})
                 if not isinstance(args, dict):
                     raise RpcError(-32602, "Object arguments required")
-                if params.get("name") == "acknowledge_test_ping":
+                if params.get('name')=='read_allowed_local_file' and self.local_files is not None:
+                    if not {'root','path'}<=set(args) or set(args)-{'root','path','include_text','max_bytes'}:
+                        raise RpcError(-32602,'Invalid local read arguments')
+                    try:content=self.local_files.read(**args)
+                    except LocalFileError as error:raise RpcError(-32602,str(error)) from None
+                    except OSError:raise RpcError(-32602,'local_file_unavailable') from None
+                elif params.get("name") == "acknowledge_test_ping":
                     content = self.acknowledge(args)
                 elif params.get("name") == "get_probe_status" and args == {}:
                     content = self.status()
                 elif params.get("name") == "get_weixin_status" and args == {}:
                     content = self.weixin.status()
+                    if self.local_files is not None:
+                        content['local_read_capability']={'enabled':True,'tool':'read_allowed_local_file',
+                            'roots':sorted(self.local_files.roots),'write':False,'execute':False,'max_read_bytes':65536}
                 elif params.get("name") == "read_weixin_message" and set(args) == {"message_id"} and isinstance(args["message_id"], str):
                     content = self.weixin.read_message(args["message_id"])
                 elif params.get("name") == "read_attachment_chunk" and set(args) == {"message_id", "attachment_id", "offset", "length"} and all(isinstance(args[k], str) for k in ("message_id", "attachment_id")):
@@ -632,6 +644,7 @@ def main():
     parser.add_argument("--allow-callback-host", action="append", default=[])
     parser.add_argument("--emit", action="store_true", help="Queue one synthetic event for the existing subscription")
     parser.add_argument("--status", action="store_true")
+    parser.add_argument('--local-files-policy',help='Explicit private owner-authorized Windows read-only root policy; disabled when absent')
     args = parser.parse_args()
     os.umask(0o077)
     worker_lock = None
@@ -641,7 +654,13 @@ def main():
         except BlockingIOError:
             print("bridge already running for this private state directory", file=sys.stderr)
             return 1
-    probe = Probe(args.state_dir, allowed_hosts=args.allow_callback_host)
+    local_files=None
+    if args.local_files_policy:
+        try:local_files=LocalReadOnly.from_policy(args.local_files_policy)
+        except (OSError,ValueError):
+            print('Authorized local read policy rejected; worker not started',file=sys.stderr)
+            return 1
+    probe = Probe(args.state_dir, allowed_hosts=args.allow_callback_host,local_files=local_files)
     if args.emit or args.status:
         try:
             print(canonical(probe.emit() if args.emit else probe.status()))
