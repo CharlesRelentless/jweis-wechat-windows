@@ -1,0 +1,46 @@
+name: Codex conversation relay
+
+on:
+  push:
+    paths:
+      - 'windows/codex-durable-relay/**'
+      - '.github/workflows/codex-relay.yml'
+  pull_request:
+    paths:
+      - 'windows/codex-durable-relay/**'
+      - '.github/workflows/codex-relay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    name: Relay Node ${{ matrix.node-version }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    defaults:
+      run:
+        shell: powershell
+        working-directory: windows/codex-durable-relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Build and run isolated Windows tests
+        run: |
+          & .\scripts\Test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check public source and generated-file exclusion
+        run: |
+          & .\scripts\Check-PublicFiles.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $trackedBuilds = @(git ls-files -- dist build)
+          if ($LASTEXITCODE -ne 0 -or $trackedBuilds.Count -ne 0) {
+            throw 'Generated relay payloads must not be tracked.'
+          }

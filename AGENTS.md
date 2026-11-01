@@ -18,3 +18,5 @@
 修改代码后运行 `python -m unittest discover -s probe_tests` 与 `python scripts/generate-schema.py --check`。在新目录审计待提交文件和 Git 历史；运行状态、密钥、二维码、日志、用户身份、私人服务器配置留在 Git 之外。
 
 此文件是公开项目执行指南，不代表用户授权操作其主机、账号、凭据或对外通信；授权来自当前用户的请求。使用产品公开能力和文档，不假定任何私有 dot 接口。
+
+处理 Jweis 读取或继续 Codex 对话时，先读 docs/CODEX-CONVERSATIONS.md。可选 windows/codex-durable-relay 组件独立构建和测试；源码维护不代表获准安装、重装、改 hosts 或发送跨对话消息。原生路径解析与微信插件错误应分别核验。
