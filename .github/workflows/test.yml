@@ -28,7 +28,7 @@ jobs:
       - name: Verify official Windows client bundle
         shell: pwsh
         run: |
-          $release = Get-Content -LiteralPath releases/windows-client-v0.0.15.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $release = Get-Content -LiteralPath releases/windows-client-v0.0.19.json -Raw -Encoding UTF8 | ConvertFrom-Json
           New-Item -ItemType Directory -Path bin | Out-Null
           Invoke-WebRequest -Uri $release.url -OutFile bin/client.zip
           if ((Get-FileHash -LiteralPath bin/client.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $release.sha256) {
@@ -43,7 +43,7 @@ jobs:
             }
             Copy-Item -LiteralPath $files[0].FullName -Destination (Join-Path bin $name)
           }
-          Copy-Item -LiteralPath releases/windows-client-v0.0.15.json -Destination bin/release-verification.json
+          Copy-Item -LiteralPath releases/windows-client-v0.0.19.json -Destination bin/release-verification.json
           python -c 'from pathlib import Path; from probe.client_integrity import verify_bundle; verify_bundle(Path.cwd())'
           if ($LASTEXITCODE -ne 0) { throw 'Bundle verification failed' }
       - name: Use a canonical temporary directory for private-path checks

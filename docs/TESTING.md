@@ -25,6 +25,13 @@
 
 `probe_tests/test_safe_status.py` 覆盖当前 Server URL 端口优先、损坏/不可读 endpoint 不回退、旧 Tunnel 兼容、非本机和带凭据地址拒绝、停止后的陈旧 `ready`、时钟超前、订阅到期/重复、网关不可达、未绑定状态，以及只读和隐私边界。全部使用合成数据库和探测替身，不读取真实消息或凭据。
 
+## v0.0.19 升级候选验证（2026-11-01）
+
+- 官方 Windows AMD64 ZIP 的 SHA-256 与 GitHub Release asset digest 一致；解包后固定两个 exe 的摘要，并实际通过启动器完整性检查。混合旧发布号或旧归档摘要会被拒绝。
+- Windows / Python 3.13.12：完整 143 项检查，142 通过、1 个 Linux 专用检查跳过，17.817 秒。包括私有 ACL、跨进程锁、Job 限制及真实 v0.0.19 客户端的本机协议 fixture；15 个工具、事件发现和实际合成状态工具转发通过。
+- schema 检查通过；合成 2 MiB 文件和 PNG 出站资源检查通过，网络请求、真实微信发送和模型进程均为 0。Linux 与远端 Windows 结果以该候选 PR 的 CI 为准。
+- 此为隔离候选，没有替换正在运行的客户端或修改真实连接。上游的 DNS 诊断与 stdio 子进程恢复行为见 [v0.0.19 发布说明](https://github.com/openai/tunnel-client/releases/tag/v0.0.19)；本轮未在线制造 DNS 故障或终止真实 worker，不能将协议兼容通过写为网络根因已修复、真实恢复已验收或长期稳定。
+
 ## 2026-10-11 已发布源码验证
 
 - Windows AMD64 / Python 3.13.12：132 tests，131通过、1个 Linux 平台测试跳过，16.415秒；schema 检查通过。

@@ -68,8 +68,8 @@ class ClientIntegrityTests(unittest.TestCase):
             (self.binary/name).write_bytes(data)
             files[name]=hashlib.sha256(data).hexdigest()
         self.record={
-            'release':'v0.0.15',
-            'sha256':'3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1',
+            'release':'v0.0.19',
+            'sha256':'1d0ecc3a54f2a51e27a635ac155f40fbb95df58c52cdeddf6c75532cc0bbeb25',
             'files':files}
         (self.binary/'release-verification.json').write_text(json.dumps(self.record),encoding='utf-8')
 
@@ -84,6 +84,15 @@ class ClientIntegrityTests(unittest.TestCase):
             target.write(b'changed')
         with self.assertRaisesRegex(ValueError,'integrity mismatch'):
             verify_bundle(self.root)
+
+    def test_mixed_release_and_archive_records_fail_before_binary_use(self):
+        for changes in ({'release':'v0.0.15'},
+                        {'sha256':'3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1'}):
+            with self.subTest(changes=changes):
+                record=dict(self.record,**changes)
+                (self.binary/'release-verification.json').write_text(json.dumps(record),encoding='utf-8')
+                with self.assertRaisesRegex(ValueError,'release provenance'):
+                    verify_bundle(self.root)
 
 
 class SafeStatusTests(unittest.TestCase):
