@@ -1,0 +1,10 @@
+{
+  "release": "v0.0.19",
+  "url": "https://github.com/openai/tunnel-client/releases/download/v0.0.19/tunnel-client-v0.0.19-windows-amd64.zip",
+  "sha256": "1d0ecc3a54f2a51e27a635ac155f40fbb95df58c52cdeddf6c75532cc0bbeb25",
+  "source": "GitHub official openai/tunnel-client release asset digest",
+  "files": {
+    "tunnel-client.exe": "7e93a39a567c87154a0aef2091b81100d78f9093c4603412cc2b55bed3dfe5ea",
+    "cloudflared.exe": "581ea1df46a9d61ead0916b389bd6cca8a14d5a3090e656c8317aa41a617a6d4"
+  }
+}

@@ -16,12 +16,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
 
 ## 下载并校验官方客户端
 
-仓库不带二进制。固定 OpenAI `tunnel-client v0.0.15` Windows AMD64 包，来源为 [官方 Release](https://github.com/openai/tunnel-client/releases/tag/v0.0.15)。发布包包含 Server URL 所需的 cloudflared 和可选 Tunnel 客户端。只信任仓库中的公开固定摘要；不得下载失败后放弃校验。
+仓库不带二进制。固定 OpenAI `tunnel-client v0.0.19` Windows AMD64 包，来源为 [官方 Release](https://github.com/openai/tunnel-client/releases/tag/v0.0.19)。发布包包含 Server URL 所需的 cloudflared 和可选 Tunnel 客户端。只信任仓库中的公开固定摘要；不得下载失败后放弃校验。
 
 以下命令用于首次安装；已有 bin 时先验证原文件，不覆盖运行中的客户端。
 
 ```powershell
-$release = Get-Content -LiteralPath .\releases\windows-client-v0.0.15.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$release = Get-Content -LiteralPath .\releases\windows-client-v0.0.19.json -Raw -Encoding UTF8 | ConvertFrom-Json
 if (Test-Path -LiteralPath .\bin) { throw 'bin exists: verify the existing bundle before replacing it' }
 New-Item -ItemType Directory -Path .\bin | Out-Null
 Invoke-WebRequest -Uri $release.url -OutFile .\bin\client.zip
@@ -37,12 +37,20 @@ foreach ($name in @('tunnel-client.exe', 'cloudflared.exe')) {
     }
     Copy-Item -LiteralPath $files[0].FullName -Destination (Join-Path .\bin $name)
 }
-Copy-Item -LiteralPath .\releases\windows-client-v0.0.15.json -Destination .\bin\release-verification.json
+Copy-Item -LiteralPath .\releases\windows-client-v0.0.19.json -Destination .\bin\release-verification.json
 & .\.venv\Scripts\python.exe -c 'from pathlib import Path; from probe.client_integrity import verify_bundle; verify_bundle(Path.cwd()); print("bundle PASS")'
 if ($LASTEXITCODE -ne 0) { throw 'Bundle verification failed' }
 ```
 
-ZIP SHA256：`3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1`。启动器每次重新验证两个 exe 的文件摘要。临时解包文件位于 Git 忽略的 bin 内。
+ZIP SHA256：`1d0ecc3a54f2a51e27a635ac155f40fbb95df58c52cdeddf6c75532cc0bbeb25`。启动器每次重新验证两个 exe 的文件摘要。临时解包文件位于 Git 忽略的 bin 内。
+
+### 已有部署的升级与回退
+
+v0.0.19 为首次控制面 DNS 失败增加有限、脱敏的诊断，默认可恢复意外退出的 stdio 子进程。后者会重置 MCP 会话；在途请求可能失败，客户端不会重放请求。已有外部进程恢复机制的部署，可按[上游回退指南](https://github.com/openai/tunnel-client/blob/v0.0.19/docs/configuration.md#stdio-failure-policy-upgrade-and-rollback) 在传给客户端的进程环境中使用 `MCP_STDIO_FAILURE_POLICY=exit`，保留整客户端退出语义。不要修改全局环境，也不要在混用旧版本时写入旧版本不支持的新 CLI/YAML 字段。
+
+先在隔离目录验证新源码和完整 bundle，实际切换前一致备份、停止明确归属的旧实例并确认 worker 锁释放，再启动一个新实例。复用原微信状态和原连接，验证认证调用、唯一订阅与真实收发；离线测试不替代这些检查。部署仍需对应授权，本仓库更新不会自动替换运行实例。
+
+回退时恢复匹配的旧源码、旧 bundle 和验证记录。保留的 v0.0.15 manifest 仅用于核验原归档，当前启动器会拒绝混用旧发布记录。不要只替换 manifest、并行启动两个客户端，或用旧数据库覆盖新消息。诊断改进不等于网络故障根因已经修复。
 
 ## 离线验证
 
