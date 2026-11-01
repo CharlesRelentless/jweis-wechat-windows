@@ -100,12 +100,34 @@ def local_request(url, payload=None):
         return response.status,None
 
 
-def run_check(confirmed_env=False):
+def fixture_environment(root,base_env):
+    env=dict(base_env)
+    for name in list(env):
+        if name.startswith(('CONTROL_PLANE_','MCP_','TUNNEL_','TUNNEL_CLIENT_','HARPOON_','CLOUDFLARED_','HEALTH_','LOG_','ADMIN_UI_','PROXY_','CODEX_','OPENAI_')):
+            del env[name]
+    env['CODEX_HOME']=str(private_dir(root/'codex-home'))
+    # The real client's optional terminal assistant is outside this MCP test.
+    # Use a harmless initialize/account stub instead of opening the owner's
+    # installed Codex, login files, native-control pipe or SQLite state.
+    env['TUNNEL_CLIENT_CODEX_APP_SERVER_CMD']=sys.executable
+    env['TUNNEL_CLIENT_CODEX_APP_SERVER_ARGS']="-c exec(__import__('os').environ['JWEIS_OFFLINE_APP_SERVER_CODE'])"
+    env['JWEIS_OFFLINE_APP_SERVER_CODE']='''import json,sys
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request:continue
+    result={'userAgent':'synthetic-offline-fixture'} if request.get('method')=='initialize' else {'account':None,'requiresOpenaiAuth':True}
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
+'''
+    return env
+
+
+def run_check(confirmed_env=False,local_files=False):
     client=verify_bundle(ROOT)
     spec=importlib.util.spec_from_file_location('render_config',ROOT/'scripts/render-config.py')
     renderer=importlib.util.module_from_spec(spec); spec.loader.exec_module(renderer)
     summary={'scope':'official local dev proxy; no hosted tunnel or WeChat account',
-             'client_version':subprocess.check_output([str(client),'--version'],text=True).strip()}
+             'client_version':subprocess.check_output([str(client),'--version'],text=True).strip(),
+             'codex_auxiliary':'isolated_synthetic_stub'}
     with temporary_fixture() as temp:
         root=private_dir(Path(temp)/"测试 空格 & $ '目录")
         # Build a real disposable environment from the invoking interpreter.
@@ -118,6 +140,18 @@ def run_check(confirmed_env=False):
         fixture_id='tunnel_'+'2'*32
         runtime=renderer.render(root,fixture_id,[],discover_callback=True,
                                 confirmed_env=confirmed_env)
+        if local_files:
+            notes=private_dir(root/'notes');(notes/'note.md').write_text('synthetic local note',encoding='utf-8')
+            policy=runtime/'state/local-files-policy.json'
+            with os.fdopen(open_private(policy,os.O_CREAT|os.O_EXCL|os.O_WRONLY),'w',encoding='utf-8') as out:
+                json.dump({'version':1,'enabled':True,'roots':{'vault':str(notes)}},out)
+            profile=runtime/'profile.yaml';text=profile.read_text(encoding='utf-8');lines=text.splitlines()
+            for i,line in enumerate(lines):
+                if line.startswith('      command: '):
+                    command=json.loads(line.split('command: ',1)[1])
+                    quoted='"'+policy.as_posix().replace('\\','\\\\').replace('"','\\"')+'"'
+                    lines[i]='      command: '+json.dumps(command+' --local-files-policy '+quoted,ensure_ascii=False)
+            with os.fdopen(open_private(profile,os.O_TRUNC|os.O_WRONLY),'w',encoding='utf-8') as out:out.write('\n'.join(lines)+'\n')
         if confirmed_env:
             with os.fdopen(open_private(runtime/'official-tunnel-activation.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL),
                            'w',encoding='utf-8') as output:
@@ -134,9 +168,7 @@ def run_check(confirmed_env=False):
         # separate process because a kill-on-close Job includes the launcher.
         job=WindowsJob()
         env=official_environment(root,runtime/'profile.yaml') if confirmed_env else dict(os.environ)
-        for name in list(env):
-            if name.startswith(('CONTROL_PLANE_','MCP_','TUNNEL_','TUNNEL_CLIENT_','HARPOON_','CLOUDFLARED_','HEALTH_','LOG_','ADMIN_UI_','PROXY_')) or name in ('OPENAI_API_KEY','OPENAI_ADMIN_KEY'):
-                del env[name]
+        env=fixture_environment(root,env)
         doctor=subprocess.run([str(client),'doctor','--profile-file',str(runtime/'profile.yaml'),'--json'],
                               env=env,cwd=root,text=True,capture_output=True,timeout=15)
         report=read_json(doctor.stdout,'doctor')
@@ -175,6 +207,12 @@ def run_check(confirmed_env=False):
                 summary['message_event']=any(x['name']=='weixin.message' for x in rpc('events/list')['events'])
                 status=rpc('tools/call',{'name':'get_weixin_status','arguments':{}})
                 summary['actual_status_tool_call']='structuredContent' in status and not status.get('isError',False)
+                if local_files:
+                    actual=rpc('tools/call',{'name':'read_allowed_local_file','arguments':{
+                        'root':'vault','path':'note.md','include_text':True}})['structuredContent']
+                    summary['authorized_local_read']=(actual.get('text')=='synthetic local note'
+                        and actual.get('read_only') is True and actual.get('source_is_untrusted_data') is True)
+                    if not summary['authorized_local_read']:raise RuntimeError('Authorized local read fixture failed')
                 summary['private_profile']=is_private(runtime/'profile.yaml')
                 summary['private_database']=is_private(runtime/'state/probe.sqlite')
                 summary['confirmed_env_mode']=confirmed_env
@@ -183,6 +221,12 @@ def run_check(confirmed_env=False):
                 summary['windows_job']=job.metrics()
                 if summary['health']!={'/healthz':200,'/readyz':200}: raise RuntimeError('Local health not ready')
                 if not summary['actual_status_tool_call'] or not summary['message_event']: raise RuntimeError('Missing real MCP capability')
+            except Exception as error:
+                from probe.probe import read_rpc_diagnostics
+                fields=('method','stage','utc','success','error_code')
+                error.offline_rpc_metadata=[{k:item[k] for k in fields if k in item}
+                    for item in read_rpc_diagnostics(runtime/'state')][-12:]
+                raise
             finally:
                 if process.poll() is None: process.terminate()
                 process.wait(timeout=8)
@@ -198,13 +242,16 @@ def run_check(confirmed_env=False):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--confirmed-env',action='store_true',help='Exercise the guarded private env-file adapter with synthetic credentials')
+    parser.add_argument('--local-files',action='store_true',help='Exercise an explicitly authorized synthetic local-file root')
     args=parser.parse_args()
     try:
-        summary=run_check(args.confirmed_env)
-        report_name='tunnel-offline-verification-env.json' if args.confirmed_env else 'tunnel-offline-verification.json'
+        summary=run_check(args.confirmed_env,args.local_files)
+        report_name=('tunnel-offline-verification-local-files.json' if args.local_files else
+                     'tunnel-offline-verification-env.json' if args.confirmed_env else 'tunnel-offline-verification.json')
         (ROOT/'docs'/report_name).write_text(json.dumps(summary,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         print(json.dumps(summary,ensure_ascii=False))
     except Exception as error:
         # Controlled categories only: never emit complete runtime logs.
-        print(json.dumps({'result':'FAIL','error_class':type(error).__name__,'reason':str(error)[:180]}))
+        print(json.dumps({'result':'FAIL','error_class':type(error).__name__,'reason':str(error)[:180],
+                          'rpc_metadata':getattr(error,'offline_rpc_metadata',[])}))
         sys.exit(1)

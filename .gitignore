@@ -18,3 +18,4 @@ docs/windows-verification.json
 docs/windows-status.json
 docs/*-verification.json
 docs/tunnel-offline-verification-env.json
+docs/tunnel-offline-verification-local-files.json

@@ -54,6 +54,16 @@ class ConnectionPublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'loopback'):
                 self.check.wait_connection_info(path,mock.Mock(poll=lambda:None),timeout=2)
 
+    def test_fixture_does_not_use_owner_codex_home_or_native_control_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=private_dir(Path(directory)/'fixture')
+            env=self.check.fixture_environment(root,{'CODEX_HOME':'owner-home',
+                'CODEX_APP_TOOLS_PIPE_PATH':'owner-context','OPENAI_API_KEY':'synthetic-key'})
+            self.assertEqual(env['CODEX_HOME'],str(root/'codex-home'))
+            self.assertNotIn('CODEX_APP_TOOLS_PIPE_PATH',env)
+            self.assertNotIn('OPENAI_API_KEY',env)
+            self.assertEqual(env['TUNNEL_CLIENT_CODEX_APP_SERVER_CMD'],sys.executable)
+
 
 class ClientIntegrityTests(unittest.TestCase):
     def setUp(self):
@@ -113,6 +123,14 @@ class SafeStatusTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform=='win32' and (ROOT/'bin/tunnel-client.exe').is_file(),
                      'Optional verified official Windows client is not installed')
 class OfficialTunnelTests(unittest.TestCase):
+    def test_official_client_reads_synthetic_authorized_local_file(self):
+        result=subprocess.run([sys.executable,str(ROOT/'scripts/tunnel-offline-check.py'),'--local-files'],
+                              text=True,encoding='utf-8',capture_output=True,timeout=35)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        report=json.loads(result.stdout)
+        self.assertEqual(report['tool_count'],16)
+        self.assertTrue(report['authorized_local_read'])
+
     def test_official_client_accepts_confirmed_env_without_another_key_file(self):
         result=subprocess.run([sys.executable,str(ROOT/'scripts/tunnel-offline-check.py'),'--confirmed-env'],
                               text=True,encoding='utf-8',capture_output=True,timeout=35)
